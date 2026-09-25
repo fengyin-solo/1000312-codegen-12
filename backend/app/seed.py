@@ -653,3 +653,84 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '已付金额': 37.5,
   '结算状态': '电量结算样例3'}]
 }
+
+
+def _ledger_row(  # noqa: PLR0913
+    row_id: int,
+    code: str,
+    target: str,
+    period: str,
+    main_status: str,
+    due: float,
+    *,
+    disputed: bool = False,
+    disputed_at_step: str | None = None,
+    energy: str = "120000",
+    price: str = "0.40",
+    day: str = "01",
+) -> dict[str, Any]:
+    """构造一条带完整推进记录的台账示例数据。
+
+    主状态决定推进到哪一步；disputed=True 时在 disputed_at_step
+    （核对中/已确认）之后追加争议挂起记录，争议只挂起本单、原进度保留。
+    时间固定写死，保证刷新与重启后示例记录稳定，不会出现进度回退。
+    """
+    chain = [
+        ("登记结算单", "09:05", "结算单登记，初始状态待核对"),
+        ("开始核对", "10:20", "发起电量与电价核对"),
+        ("确认结算", "14:30", f"核对完成，应结金额锁定为 {due:.2f} 元"),
+        ("登记付款", "16:00", "同周期合并付款，已付金额与应结金额一致"),
+    ]
+    index = ["待核对", "核对中", "已确认", "已付清"].index(main_status)
+    records = []
+    for seq, (action, clock, remark) in enumerate(chain[: index + 1], start=1):
+        records.append({
+            "seq": seq,
+            "time": f"2026-09-{day} {clock}",
+            "action": action,
+            "operator": "值班管理员",
+            "remark": remark,
+        })
+    paid = due if main_status == "已付清" else 0.0
+    if disputed:
+        step_index = ["核对中", "已确认"].index(disputed_at_step or "核对中") + 1
+        records = records[: step_index + 1]
+        records.append({
+            "seq": len(records) + 1,
+            "time": f"2026-09-{day} 17:10",
+            "action": "标记争议",
+            "operator": "值班管理员",
+            "remark": f"仅挂起本张结算单，原进度「{disputed_at_step}」保留：对方反馈电量口径待复核",
+        })
+        paid = 0.0
+    return {
+        "id": row_id,
+        "status": main_status,
+        "disputed": disputed,
+        "pending": not (main_status == "已付清" and not disputed),
+        "abnormal": disputed,
+        "结算单号": code,
+        "结算对象": target,
+        "结算周期": period,
+        "上网电量": energy,
+        "电价标准": price,
+        "应结金额": round(float(due), 2),
+        "已付金额": round(float(paid), 2),
+        "结算状态": "有争议" if disputed else main_status,
+        "records": records,
+    }
+
+
+# 结算流转台账示例：两个结算周期，覆盖待核对、核对中、已确认、已付清与争议挂起
+SEED_ROWS["settlement_ledger"] = [
+    _ledger_row(1, "LEDG-202608-01", "国网西北分公司", "2026-08", "已付清", 48000.0, day="02"),
+    _ledger_row(2, "LEDG-202608-02", "国网西北分公司", "2026-08", "已付清", 35600.5, day="02"),
+    _ledger_row(3, "LEDG-202609-01", "国网西北分公司", "2026-09", "已确认", 51200.0, day="03"),
+    _ledger_row(4, "LEDG-202609-02", "国网西北分公司", "2026-09", "已确认", 28750.0, day="03"),
+    _ledger_row(5, "LEDG-202609-03", "绿能售电有限公司", "2026-09", "核对中", 19800.0,
+                disputed=True, disputed_at_step="核对中", day="04"),
+    _ledger_row(6, "LEDG-202609-04", "绿能售电有限公司", "2026-09", "核对中", 16400.0, day="04"),
+    _ledger_row(7, "LEDG-202609-05", "园区直供用户", "2026-09", "待核对", 9200.0, day="05"),
+    _ledger_row(8, "LEDG-202609-06", "园区直供用户", "2026-09", "已确认", 12450.5,
+                disputed=True, disputed_at_step="已确认", day="05"),
+]

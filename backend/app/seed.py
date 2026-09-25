@@ -3,6 +3,105 @@ from __future__ import annotations
 
 from typing import Any
 
+
+def _settlement_ledger_rows() -> list[dict[str, Any]]:
+    """结算流转台账示例：同周期多张结算单覆盖各推进节点，含一次合并付款与一张争议挂起。"""
+
+    def bill(  # noqa: PLR0913
+        entry_id: int,
+        code: str,
+        target: str,
+        period: str,
+        energy: float,
+        price: float,
+        status: str,
+        *,
+        pending: bool,
+        abnormal: bool,
+        paid: float = 0.0,
+        batch_no: str | None = None,
+    ) -> dict[str, Any]:
+        due = round(energy * price, 2)
+        return {
+            "id": entry_id,
+            "status": status,
+            "pending": pending,
+            "abnormal": abnormal,
+            "结算单号": code,
+            "结算对象": target,
+            "结算周期": period,
+            "上网电量": energy,
+            "电价标准": price,
+            "应结金额": due,
+            "已付金额": paid,
+            "结算状态": status,
+            "history": [],
+            "_batch": batch_no,
+        }
+
+    def track(  # noqa: PLR0913
+        row: dict[str, Any],
+        action: str,
+        time: str,
+        operator: str,
+        to_status: str,
+        *,
+        from_status: str = "",
+        remark: str = "",
+        batch_no: str | None = None,
+        paid_snapshot: float = 0.0,
+    ) -> None:
+        row["history"].append({
+            "seq": len(row["history"]) + 1,
+            "time": time,
+            "action": action,
+            "from_status": from_status,
+            "to_status": to_status,
+            "operator": operator,
+            "remark": remark,
+            "应结金额": row["应结金额"],
+            "已付金额": paid_snapshot,
+            "批次号": batch_no,
+        })
+
+    rows = [
+        bill(1, "SETT-0001", "华源电力运维有限公司", "2026-08", 128000, 0.41, "待核对", pending=True, abnormal=False),
+        bill(2, "SETT-0002", "华源电力运维有限公司", "2026-08", 96500, 0.41, "核对中", pending=True, abnormal=False),
+        bill(3, "SETT-0003", "宁北新能源服务站", "2026-08", 152300, 0.41, "已确认", pending=True, abnormal=False),
+        bill(4, "SETT-0004", "宁北新能源服务站", "2026-08", 87400, 0.41, "有争议", pending=True, abnormal=True),
+        bill(5, "SETT-0005", "华源电力运维有限公司", "2026-08", 110200, 0.41, "已付清", pending=False, abnormal=False, paid=45182.0, batch_no="PAY-20260910103000"),
+        bill(6, "SETT-0006", "华源电力运维有限公司", "2026-07", 134600, 0.40, "已付清", pending=False, abnormal=False, paid=53840.0, batch_no="PAY-20260812093500"),
+        bill(7, "SETT-0007", "华源电力运维有限公司", "2026-07", 98800, 0.40, "已付清", pending=False, abnormal=False, paid=39520.0, batch_no="PAY-20260812093500"),
+    ]
+
+    for row in rows:
+        track(row, "登记结算单", "2026-09-01 09:15:00", "结算专员-周敏", "待核对", remark="按上网电量与电价标准建单")
+
+    track(rows[1], "发起核对", "2026-09-03 10:05:00", "财务核对-李会计", "核对中", from_status="待核对")
+
+    track(rows[2], "发起核对", "2026-09-03 10:12:00", "财务核对-李会计", "核对中", from_status="待核对")
+    track(rows[2], "确认结算", "2026-09-08 16:40:00", "财务经理-王倩", "已确认", from_status="核对中", remark="电量与电价复核一致")
+
+    track(rows[3], "发起核对", "2026-09-03 10:20:00", "财务核对-李会计", "核对中", from_status="待核对")
+    track(rows[3], "标记争议", "2026-09-09 14:20:00", "财务核对-李会计", "有争议", from_status="核对中", remark="表计读数与场站上报差 3200 度，挂起待核")
+
+    track(rows[4], "发起核对", "2026-09-03 10:26:00", "财务核对-李会计", "核对中", from_status="待核对")
+    track(rows[4], "确认结算", "2026-09-08 16:45:00", "财务经理-王倩", "已确认", from_status="核对中", remark="电量与电价复核一致")
+    track(rows[4], "登记付款", "2026-09-10 10:30:00", "出纳-陈刚", "已付清", from_status="已确认", remark="8 月周期付款", batch_no="PAY-20260910103000", paid_snapshot=rows[4]["已付金额"])
+
+    track(rows[5], "发起核对", "2026-08-04 09:30:00", "财务核对-李会计", "核对中", from_status="待核对")
+    track(rows[5], "确认结算", "2026-08-09 15:10:00", "财务经理-王倩", "已确认", from_status="核对中", remark="7 月电量复核通过")
+    track(rows[5], "登记付款", "2026-08-12 09:35:00", "出纳-陈刚", "已付清", from_status="已确认", remark="7 月周期合并付款，2 张结算单同批", batch_no="PAY-20260812093500", paid_snapshot=rows[5]["已付金额"])
+
+    track(rows[6], "发起核对", "2026-08-04 09:35:00", "财务核对-李会计", "核对中", from_status="待核对")
+    track(rows[6], "确认结算", "2026-08-09 15:18:00", "财务经理-王倩", "已确认", from_status="核对中", remark="7 月电量复核通过")
+    track(rows[6], "登记付款", "2026-08-12 09:35:00", "出纳-陈刚", "已付清", from_status="已确认", remark="7 月周期合并付款，2 张结算单同批", batch_no="PAY-20260812093500", paid_snapshot=rows[6]["已付金额"])
+
+    for row in rows:
+        row.pop("_batch", None)
+    return rows
+
+
 SEED_ROWS: dict[str, list[dict[str, Any]]] = {
     "station": [{'id': 1,
   'status': '在建',
@@ -616,40 +715,5 @@ SEED_ROWS: dict[str, list[dict[str, Any]]] = {
   '考核成绩': '培训考核样例3',
   '培训日期': '2026-09-03',
   '培训状态': '培训考核样例3'}],
-    "settlement": [{'id': 1,
-  'status': '待核对',
-  'pending': True,
-  'abnormal': False,
-  '结算单号': 'SETT-0001',
-  '结算对象': '电量结算样例1',
-  '结算周期': '电量结算样例1',
-  '上网电量': '电量结算样例1',
-  '电价标准': '电量结算样例1',
-  '应结金额': 12.5,
-  '已付金额': 12.5,
-  '结算状态': '电量结算样例1'},
- {'id': 2,
-  'status': '核对中',
-  'pending': True,
-  'abnormal': True,
-  '结算单号': 'SETT-0002',
-  '结算对象': '电量结算样例2',
-  '结算周期': '电量结算样例2',
-  '上网电量': '电量结算样例2',
-  '电价标准': '电量结算样例2',
-  '应结金额': 25.0,
-  '已付金额': 25.0,
-  '结算状态': '电量结算样例2'},
- {'id': 3,
-  'status': '已确认',
-  'pending': False,
-  'abnormal': False,
-  '结算单号': 'SETT-0003',
-  '结算对象': '电量结算样例3',
-  '结算周期': '电量结算样例3',
-  '上网电量': '电量结算样例3',
-  '电价标准': '电量结算样例3',
-  '应结金额': 37.5,
-  '已付金额': 37.5,
-  '结算状态': '电量结算样例3'}]
+    "settlement": _settlement_ledger_rows()
 }
